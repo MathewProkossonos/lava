@@ -573,6 +573,9 @@ class CompressOverlay(Action):
         lava_test_results_dir = self.get_namespace_data(
             action="test", label="results", key="lava_test_results_dir"
         )
+
+        self.logger.error("lava_test_results_dir:%s" % lava_test_results_dir)
+
         self.set_namespace_data(
             action="test", label="shared", key="output", value=output
         )
@@ -591,6 +594,44 @@ class CompressOverlay(Action):
                     # ssh authorization support
                     if os.path.exists("./root/"):
                         tar.add(".%s" % "/root/")
+            except tarfile.TarError as exc:
+                raise InfrastructureError(
+                    "Unable to create lava overlay tarball: %s" % exc
+                )
+
+        self.set_namespace_data(
+            action=self.name, label="output", key="file", value=output
+        )
+        return connection
+
+class CompressRootfs(Action):
+    """
+    Makes a tarball of the finished overlay and declares filename of the tarball
+    """
+
+    name = "compress-rootfs"
+    description = "Create a lava rootfs tarball and store alongside the job"
+    summary = "Compress the lava rootfs files"
+
+    def run(self, connection, max_end_time):
+        output = os.path.join(self.mkdtemp(), "rootfs-%s.tar.gz" % self.level)
+
+        location = self.get_namespace_data(
+            action="extract-rootfs", label="file", key="root")
+
+        if not location:
+            raise LAVABug("Missing lava overlay location")
+        if not os.path.exists(location):
+            raise LAVABug("Unable to find overlay location")
+        if not self.valid:
+            self.logger.error(self.errors)
+            return connection
+        connection = super().run(connection, max_end_time)
+        with chdir(location):
+            try:
+                with tarfile.open(output, "w:gz") as tar:
+                    tar.add(".")
+                    self.logger.error("locationfiles:%s %s " % (os.getcwd(), os.listdir()))
             except tarfile.TarError as exc:
                 raise InfrastructureError(
                     "Unable to create lava overlay tarball: %s" % exc

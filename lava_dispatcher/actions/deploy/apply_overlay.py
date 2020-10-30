@@ -251,6 +251,63 @@ class PrepareOverlayTftp(Action):
             return connection
         return connection
 
+class ApplyOverlayScp(Action):
+    """
+    Unpacks the overlay on top of the rootfs
+    """
+
+    name = "apply-overlay-scp"
+    description = "unpack the overlay into the rootfs"
+    summary = "apply lava overlay test files"
+    timeout_exception = InfrastructureError
+
+    def validate(self):
+        super().validate()
+
+    def run(self, connection, max_end_time):
+        connection = super().run(connection, max_end_time)
+        directory = None
+        overlay_file = None
+        namespace = self.parameters.get("namespace")
+
+        lava_test_results_dir = self.get_namespace_data(
+            action="test", label="results", key="lava_test_results_dir"
+        )
+
+        self.logger.debug("ApplyOverlayScp %s" % lava_test_results_dir)
+
+        if self.parameters.get("rootfs") is not None:
+            overlay_file = self.get_namespace_data(
+                action="compress-overlay", label="output", key="file"
+            )
+            directory = self.get_namespace_data(
+                action="extract-rootfs", label="file", key="root"
+            )
+        else:
+            self.logger.debug("[%s] No overlay directory", namespace)
+
+        rootfs_files = os.listdir(directory)
+
+        target_rootfs_dir = directory + lava_test_results_dir
+        self.logger.debug("ApplyOverlayScp directory %s" %  directory)
+        self.logger.debug("ApplyOverlayScp target_rootfs_dir %s" %  target_rootfs_dir)
+        os.makedirs(target_rootfs_dir)
+
+        for file_name in rootfs_files:
+            self.logger.debug("ApplyOverlayScp move %s to %s" % (os.path.join(directory, file_name), target_rootfs_dir))
+            shutil.move(os.path.join(directory, file_name), target_rootfs_dir)
+
+        if overlay_file:
+            self.logger.debug(
+                "[%s] Applying overlay %s to directory %s where %s",
+                namespace,
+                overlay_file,
+                directory,
+                os.listdir(directory),
+            )
+            untar_file(overlay_file, directory)
+        return connection
+
 
 class ApplyOverlayTftp(Action):
     """
@@ -379,10 +436,11 @@ class ApplyOverlayTftp(Action):
             )
         if overlay_file:
             self.logger.debug(
-                "[%s] Applying overlay %s to directory %s",
+                "[%s] Applying overlay %s to directory %s where %s",
                 namespace,
                 overlay_file,
                 directory,
+                os.listdir(directory),
             )
             untar_file(overlay_file, directory)
             if nfs_address:
@@ -410,6 +468,7 @@ class ExtractRootfs(Action):
         self.use_lzma = False
 
     def run(self, connection, max_end_time):
+        self.logger.info("-----EXTRACT_ROOTFS----- %s START" % self.parameters)
         if not self.parameters.get(self.param_key):  # idempotency
             return connection
         connection = super().run(connection, max_end_time)
@@ -417,10 +476,12 @@ class ExtractRootfs(Action):
             action="download-action", label=self.param_key, key="file"
         )
         root_dir = self.mkdtemp()
+        self.logger.info("-----EXTRACT_ROOTFS----- %s %s" % (root, root_dir))
         untar_file(root, root_dir)
         self.set_namespace_data(
             action="extract-rootfs", label="file", key=self.file_key, value=root_dir
         )
+
         self.logger.debug("Extracted %s to %s", self.file_key, root_dir)
         return connection
 
@@ -456,6 +517,7 @@ class ExtractNfsRootfs(ExtractRootfs):
                 self.errors = "prefix must be a directory and end with /"
 
     def run(self, connection, max_end_time):
+        self.logger.info("-----EXTRACT_NFSROOTFS----- %s START" % self.parameters)
         if not self.parameters.get(self.param_key):  # idempotency
             return connection
         connection = super().run(connection, max_end_time)
@@ -477,6 +539,7 @@ class ExtractNfsRootfs(ExtractRootfs):
                 action="extract-rootfs", label="file", key=self.file_key, value=root_dir
             )
 
+        self.logger.info("-----EXTRACT_NFSROOTFS----- %s %s END" % (self.file_key, root_dir))
         self.job.device["dynamic_data"]["NFS_ROOTFS"] = self.get_namespace_data(
             action="extract-rootfs", label="file", key=self.file_key
         )
@@ -861,6 +924,7 @@ class AppendOverlays(Action):
 
     def validate(self):
         super().validate()
+        raise JobError("wtf")
         # Check that we have "overlays" dict
         if "overlays" not in self.params:
             raise JobError("Missing 'overlays' dictionary")

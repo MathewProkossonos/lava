@@ -128,14 +128,16 @@ class ConnectSsh(Action):
         params = self._check_params()
         which("ssh")
         if "serial" not in self.job.device["actions"]["boot"]["connections"]:
-            self.errors = "Device not configured to support serial connection."
+            self.info = "Device not configured to support serial connection."
         if "host" in self.job.device["actions"]["deploy"]["methods"]["ssh"]:
             self.primary = True
             self.host = self.job.device["actions"]["deploy"]["methods"]["ssh"]["host"]
         if self.valid:
             self.command = ["ssh"]
             if "options" in params:
+                self.logger.debug("SSH! options %s" % params["options"])
                 self.command.extend(params["options"])
+                self.logger.debug("SSH! command %s" % self.command)
             # add arguments to ignore host key checking of the host device
             self.command.extend(
                 ["-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no"]
@@ -191,6 +193,7 @@ class ConnectSsh(Action):
                 command_str,
             )
             command.append("%s@%s" % (self.ssh_user, self.host))
+            self.logger.info("SSH command %s" % command)
         else:
             raise JobError(
                 "Unable to identify host address. Primary? %s" % self.primary

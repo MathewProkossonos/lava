@@ -20,11 +20,18 @@
 
 
 import os
+import tarfile
+from lava_common.exceptions import InfrastructureError, LAVABug
 from lava_dispatcher.logical import Deployment
 from lava_dispatcher.action import Action, Pipeline
-from lava_dispatcher.actions.deploy.apply_overlay import ExtractRootfs, ExtractModules
+from lava_dispatcher.utils.contextmanager import chdir
+from lava_dispatcher.actions.deploy.apply_overlay import (
+    ExtractRootfs,
+    ExtractModules,
+    ApplyOverlayScp,
+ )
 from lava_dispatcher.actions.deploy.environment import DeployDeviceEnvironment
-from lava_dispatcher.actions.deploy.overlay import OverlayAction
+from lava_dispatcher.actions.deploy.overlay import OverlayAction, CompressRootfs
 from lava_dispatcher.actions.deploy.download import DownloaderAction
 from lava_dispatcher.protocols.multinode import MultinodeProtocol
 
@@ -69,7 +76,7 @@ class ScpOverlay(Action):
 
     def __init__(self):
         super().__init__()
-        self.items = []
+        self.items = ["firmware", "kernel", "dtb", "rootfs", "modules"]
 
     def validate(self):
         super().validate()
@@ -78,9 +85,10 @@ class ScpOverlay(Action):
             self.errors = "Scp overlay needs a test action."
             return
         if "serial" not in self.job.device["actions"]["deploy"]["connections"]:
-            self.errors = "Device not configured to support serial connection."
+            self.info = "Device not configured to support serial connection."
 
     def populate(self, parameters):
+        self.logger.info("---SSH::populate---")
         self.pipeline = Pipeline(parent=self, job=self.job, parameters=parameters)
         tar_flags = (
             parameters["deployment_data"]["tar_flags"]
@@ -95,10 +103,11 @@ class ScpOverlay(Action):
             parameters=parameters,
         )
         self.pipeline.add_action(OverlayAction())
+        self.logger.info("---SSH::parameters %s %s---" % (parameters, self.items))
         for item in self.items:
             if item in parameters:
                 self.pipeline.add_action(
-                    DownloaderAction(item, path=self.mkdtemp()), params=parameters[item]
+                    DownloaderAction(item, path=self.mkdtemp(), params=parameters[item])
                 )
                 self.set_namespace_data(
                     action=self.name,
@@ -168,11 +177,25 @@ class PrepareOverlayScp(Action):
             ExtractModules()
         )  # idempotent, checks for a modules parameter
 
+        if "rootfs" in parameters:
+            self.pipeline.add_action(
+                ApplyOverlayScp()
+            )  # idempotent, checks for a modules parameter
+            self.pipeline.add_action(
+                CompressRootfs()
+            )  # idempotent, checks for a modules parameter
+
     def run(self, connection, max_end_time):
         connection = super().run(connection, max_end_time)
+
+        if "rootfs" in self.parameters:
+            action = "compress-rootfs"
+        else:
+            action = "compress-overlay"
+
         overlay_file = self.get_namespace_data(
-            action="compress-overlay", label="output", key="file"
-        )
+            action=action, label="output", key="file")
+
         self.logger.info("Preparing to copy: %s", os.path.basename(overlay_file))
         self.set_namespace_data(
             action=self.name, label="scp-deploy", key="overlay", value=overlay_file
